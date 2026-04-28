@@ -547,6 +547,7 @@ class Logger:
         self.subtask_explore_dist = 0.0
         
         self.subtask_frames = [] 
+        self.subtask_map_frames = []
 
         return subtask_metadata
 
@@ -569,7 +570,7 @@ class Logger:
     def save_video(self, subtask_id, subtask_metadata, is_success):
         """
         Compiles stored frames into an avi and saves it to the episode directory.
-        Includes a text overlay indicating the task and success status at the bottom.
+        Stacks the top-down map side-by-side with the egocentric view.
         """
         if not hasattr(self, 'subtask_frames') or not self.subtask_frames:
             logging.warning(f"No frames to save for subtask {subtask_id}")
@@ -582,18 +583,36 @@ class Logger:
 
         video_path = os.path.join(video_dir, f"video_{subtask_id}.avi")
         
+        import cv2
+        import numpy as np
+        
         orig_height, orig_width, _ = self.subtask_frames[0].shape
         
         width = orig_width if orig_width % 2 == 0 else orig_width - 1
         height = orig_height if orig_height % 2 == 0 else orig_height - 1
         
+        # Check if we successfully saved map frames to stack
+        has_maps = hasattr(self, 'subtask_map_frames') and len(self.subtask_map_frames) == len(self.subtask_frames)
+        
+        if has_maps:
+            map_orig_h, map_orig_w, _ = self.subtask_map_frames[0].shape
+            # Scale map WIDTH to perfectly match the main video HEIGHT
+            map_w = int(map_orig_w * (height / map_orig_h))
+            map_w = map_w if map_w % 2 == 0 else map_w - 1
+        else:
+            map_w = 0
+            
+        # The new video width is the Agent View + Map View side-by-side
+        total_width = width + map_w
+        total_height = height # Height remains constant
+        
         fps = 1
         
         fourcc = cv2.VideoWriter_fourcc(*'MJPG') 
-        video = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+        video = cv2.VideoWriter(video_path, fourcc, fps, (total_width, total_height))
         
         if not video.isOpened():
-            logging.error(f"OpenCV failed to initialize writer! Codec missing or invalid dimensions: {width}x{height}")
+            logging.error(f"OpenCV failed to initialize writer! Codec missing or invalid dimensions: {total_width}x{total_height}")
             return
         
         goal_text = extract_core_goal(subtask_metadata.get('question', 'Find target'))
@@ -603,25 +622,36 @@ class Logger:
         outcome_text = "Outcome: SUCCESS" if is_success else "Outcome: FAILURE"
         outcome_color = (0, 255, 0) if is_success else (0, 0, 255) 
 
-        # Calculate Y positions anchored to the bottom of the frame
-        y_outcome = height - 30
+        # Text anchors to the bottom
+        y_outcome = total_height - 30
         y_goal = y_outcome - 40
 
-        for frame in self.subtask_frames:
+        for i, frame in enumerate(self.subtask_frames):
             if frame.dtype != np.uint8:
                 frame = (frame * 255).astype(np.uint8)
                 
             bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             
-            # Enforce the even dimensions so OpenCV doesn't silently fail writing the frame
             if (orig_width, orig_height) != (width, height):
                 bgr_frame = cv2.resize(bgr_frame, (width, height))
+                
+            # If maps exist, stack them horizontally!
+            if has_maps:
+                map_frame = self.subtask_map_frames[i]
+                if map_frame.dtype != np.uint8:
+                    map_frame = (map_frame * 255).astype(np.uint8)
+                map_bgr = cv2.cvtColor(map_frame, cv2.COLOR_RGB2BGR)
+                
+                # Resize map to match the height of the main video
+                map_bgr = cv2.resize(map_bgr, (map_w, height))
+                
+                # Horizontally stack: Agent View on the Left, Map on the Right
+                bgr_frame = np.hstack((bgr_frame, map_bgr))
             
-            # Draw Goal Text (Above Outcome)
-            cv2.putText(bgr_frame, goal_text, (10, y_goal), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
-            cv2.putText(bgr_frame, goal_text, (10, y_goal), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            # Text is drawn at the bottom left (over the agent view)
+            cv2.putText(bgr_frame, goal_text, (10, y_goal), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
+            cv2.putText(bgr_frame, goal_text, (10, y_goal), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
             
-            # Draw Outcome Text (Bottom Line)
             cv2.putText(bgr_frame, outcome_text, (10, y_outcome), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
             cv2.putText(bgr_frame, outcome_text, (10, y_outcome), cv2.FONT_HERSHEY_SIMPLEX, 0.8, outcome_color, 2)
             
@@ -632,6 +662,8 @@ class Logger:
         logging.info(f"Saved video to {abs_path}")
         
         self.subtask_frames = []
+        if has_maps:
+            self.subtask_map_frames = []
 
     def save_topdown_visualization(
         self, global_step, subtask_id, subtask_metadata, goal_obj_ids_mapping, fig
@@ -655,6 +687,38 @@ class Logger:
 
         fig.tight_layout()
         plt.savefig(os.path.join(visualization_path, f"{global_step}_{subtask_id}.png"))
+        plt.close()
+
+    def save_topdown_visualization_video(
+        self, global_step, subtask_id, subtask_metadata, goal_obj_ids_mapping, fig
+    ):
+        if fig is None:
+            logging.warning("No map figure returned for this step, skipping video map overlay.")
+            return
+
+        ax1 = fig.axes[0]
+        
+        ax1.plot(
+            self.pts_voxels[:-1, 1], self.pts_voxels[:-1, 0], linewidth=1, color="white"
+        )
+        
+        ax1.scatter(self.pts_voxels[0, 1], self.pts_voxels[0, 0], c="white", s=50)
+
+        for goal_id, goal_pos_voxel in zip(
+            subtask_metadata["goal_obj_ids"], subtask_metadata["goal_positions_voxel"]
+        ):
+            color = "green" if len(goal_obj_ids_mapping[goal_id]) > 0 else "red"
+            ax1.scatter(goal_pos_voxel[1], goal_pos_voxel[0], c=color, s=120, edgecolors='black', zorder=5)
+
+        fig.tight_layout()
+        
+        fig.canvas.draw()
+        map_img = np.array(fig.canvas.buffer_rgba())[..., :3] 
+        
+        if not hasattr(self, 'subtask_map_frames'):
+            self.subtask_map_frames = []
+        self.subtask_map_frames.append(map_img)
+
         plt.close()
 
     def save_frontier_visualization(

@@ -576,6 +576,7 @@ class TSDFPlanner(TSDFPlannerBase):
         cfg,
         path_points=None,
         save_visualization=True,
+        save_video=False
     ):
         if self.max_point is None or self.target_point is None:
             logging.error(
@@ -848,6 +849,63 @@ class TSDFPlanner(TSDFPlannerBase):
                     )
 
                 ax1.add_patch(arrow)
+
+        if fig is None and save_video:
+            h, w = self._tsdf_vol_cpu.shape[:2]
+            h = 8 * h / w
+            arr_scale = (
+                0.1 / self._voxel_size
+            )  # when for default voxel size=0.1m, the unit length is 1
+
+            fig, ax1 = plt.subplots(figsize=(8, h))
+
+            ft_map = np.zeros(
+                (self._tsdf_vol_cpu.shape[0], self._tsdf_vol_cpu.shape[1], 3),
+                dtype=np.uint8,
+            ) + np.asarray([[[255, 255, 255]]], dtype=np.uint8)
+
+            _, unoccupied_high = self.get_island_around_pts(pts, height=1.8)
+            obstacle_map = self.get_obstacle_map(height=1.8)
+            # convolution to get the obstacles together with surroundings
+            kernel_size = int(0.3 / self._voxel_size)
+            kernel = np.ones((kernel_size, kernel_size))
+            obstacle_map_convolved = ndimage.convolve(
+                obstacle_map.astype(float), kernel, mode="constant", cval=0.0
+            )
+
+            # assign colors to the map
+            ft_map[unoccupied_high > 0] = [200, 200, 200]
+            ft_map[(self.unexplored == 0) & (unoccupied_high > 0)] = [194, 246, 198]
+            ft_map[
+                (obstacle_map_convolved > 0)
+                & (obstacle_map_convolved < kernel_size**2 / 2)
+            ] = [100, 100, 100]
+            ft_map[(obstacle_map_convolved >= kernel_size**2 / 2)] = [0, 0, 0]
+
+            ax1.imshow(ft_map)
+            ax1.axis("off")
+
+            agent_orientation = self.rad2vector(angle)
+
+            ax1.scatter(
+                cur_point[1],
+                cur_point[0],
+                c=(23 / 255, 188 / 255, 243 / 255),
+                s=400,
+                label="current",
+            )
+
+            end_x, end_y = (
+                cur_point[1] + agent_orientation[1] * 5 * arr_scale,
+                cur_point[0] + agent_orientation[0] * 5 * arr_scale,
+            )
+            ax1.plot(
+                [cur_point[1], end_x],
+                [cur_point[0], end_y],
+                color="black",
+                linewidth=5 * arr_scale,
+            )
+            
 
         # Convert back to world coordinates
         next_point_normal = next_point * self._voxel_size + self._vol_origin[:2]

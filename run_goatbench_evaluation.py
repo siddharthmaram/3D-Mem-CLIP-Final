@@ -162,7 +162,7 @@ def main(cfg, start_ratio=0.0, end_ratio=1.0, split=1):
                 floor_height_offset=0,
                 pts_init=pts,
                 init_clearance=cfg.init_clearance * 2,
-                save_visualization=cfg.save_visualization,
+                save_visualization=cfg.save_visualization or cfg.save_video,
             )
 
             episode_dir, eps_frontier_dir, eps_snapshot_dir = logger.init_episode(
@@ -215,7 +215,7 @@ def main(cfg, start_ratio=0.0, end_ratio=1.0, split=1):
                         floor_height_offset=0,
                         pts_init=pts,
                         init_clearance=cfg.init_clearance * 2,
-                        save_visualization=cfg.save_visualization,
+                        save_visualization=cfg.save_visualization or cfg.save_video,
                     )
 
                 while cnt_step < num_step - 1:
@@ -291,7 +291,6 @@ def main(cfg, start_ratio=0.0, end_ratio=1.0, split=1):
                                 goal_obj_ids_mapping[gt_goal_id].append(det_goal_id)
                             all_added_obj_ids += added_obj_ids
 
-                        logger.log_frame(rgb)
 
                         # Clean up or merge redundant objects periodically
                         scene.periodic_cleanup_objects(
@@ -311,6 +310,8 @@ def main(cfg, start_ratio=0.0, end_ratio=1.0, split=1):
                             margin_w=int(cfg.margin_w_ratio * img_width),
                             explored_depth=cfg.explored_depth,
                         )
+
+                    logger.log_frame(rgb)
                     logging.info(f"Goal object mapping: {goal_obj_ids_mapping}")
 
                     # (2) Update Memory Snapshots with hierarchical clustering
@@ -411,6 +412,7 @@ def main(cfg, start_ratio=0.0, end_ratio=1.0, split=1):
                         cfg=cfg.planner,
                         path_points=None,
                         save_visualization=cfg.save_visualization,
+                        save_video=cfg.save_video
                     )
                     if return_values[0] is None:
                         logging.info(
@@ -428,6 +430,15 @@ def main(cfg, start_ratio=0.0, end_ratio=1.0, split=1):
                     # sanity check about objects, scene graph, snapshots, ...
                     scene.sanity_check(cfg=cfg)
 
+                    if  cfg.save_video:
+                        logger.save_topdown_visualization_video(
+                            global_step=global_step,
+                            subtask_id=subtask_id,
+                            subtask_metadata=subtask_metadata,
+                            goal_obj_ids_mapping=goal_obj_ids_mapping,
+                            fig=fig,
+                        )
+
                     if cfg.save_visualization:
                         # save the top-down visualization
                         logger.save_topdown_visualization(
@@ -437,6 +448,8 @@ def main(cfg, start_ratio=0.0, end_ratio=1.0, split=1):
                             goal_obj_ids_mapping=goal_obj_ids_mapping,
                             fig=fig,
                         )
+
+                    if cfg.save_visualization:
                         # save the visualization of vlm's choice at each step
                         logger.save_frontier_visualization(
                             global_step=global_step,
