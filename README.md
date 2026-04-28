@@ -28,3 +28,7 @@ For visualizations and videos, change the following in `cfg/eval_goatbench.yaml`
 save_visualization: true
 save_video: true
 ```
+
+## Videos
+Videos for some of the success and failure episodes are available here:
+[Onedrive Link](https://iiitbac-my.sharepoint.com/:f:/g/personal/siddharth_maramreddy_iiitb_ac_in/IgDYBgD8rY0-RISQ6x2EPo1VARrfV_qLfTaNlTPrOjo2inI?e=9rA1N6)
